@@ -1,0 +1,96 @@
+---
+- name: Configure DHCP and PXE server
+  hosts: all
+  become: true
+  tasks:
+  - name: Disable ufw
+    ansible.builtin.systemd:
+      name: ufw
+      state: stopped
+      enabled: false
+
+  - name: Update cache
+    ansible.builtin.apt:
+      update_cache: true
+      cache_valid_time: 3600
+      name:
+        - dnsmasq
+      state: latest
+
+  - name: Copy PXE config file
+    ansible.builtin.copy:
+      src: ~/ansible/dhcp/pxe.conf
+      dest: /etc/dnsmasq.d/pxe.conf
+
+  - name: Create tftp folder
+    ansible.builtin.file:
+      path: /srv/tftp
+      state: directory
+
+  - name: Download net install
+    ansible.builtin.get_url:
+      url: https://cdimage.ubuntu.com/ubuntu-server/noble/daily-live/current/noble-netboot-amd64.tar.gz
+      dest: /root
+      
+  - name: Unpack archive
+    ansible.builtin.unarchive:
+      src: /root/noble-netboot-amd64.tar.gz  
+      dest: /srv/tftp/                        
+      remote_src: yes                         
+      extra_opts:
+        - --strip-components=1
+    notify: Restart dnsmasq
+
+  - name: Install apache2
+    ansible.builtin.apt:
+      name: apache2
+      state: latest
+
+  - name: Create folder for images
+    ansible.builtin.file:
+      dest: /srv/images
+      state: directory
+  
+  - name: Download iso images
+    ansible.builtin.get_url:
+      url: https://cdimage.ubuntu.com/ubuntu-server/noble/daily-live/current/noble-live-server-amd64.iso
+      dest: /srv/images
+      timeout: 3600
+
+  - name: Copy apache config
+    ansible.builtin.copy:
+      src: ~/ansible/dhcp/ks-server.conf
+      dest: /etc/apache2/sites-available/ks-server.conf
+    notify: Restart apache
+  
+  - name: Activate apache config
+    ansible.builtin.command:
+      cmd: sudo a2ensite ks-server.conf
+  
+  - name: Copy Image config
+    ansible.builtin.copy:
+      src: ~/ansible/dhcp/default
+      dest: /srv/tftp/amd64/pxelinux.cfg/default
+
+  - name: Create folder ks
+    ansible.builtin.file:
+      dest: /srv/ks
+      state: directory
+
+  - name: Copy user-data confgi
+    ansible.builtin.copy:
+      src: ~/ansible/dhcp/user-data
+      dest: /srv/ks/user-data
+
+  handlers:
+    - name: Restart dnsmasq
+      ansible.builtin.systemd:
+        name: dnsmasq
+        state: restarted
+        enabled: true
+
+    - name: Restart apache
+      ansible.builtin.systemd:
+        name: apache2
+        state: restarted
+        enabled: true
